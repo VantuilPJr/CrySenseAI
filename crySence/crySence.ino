@@ -135,6 +135,7 @@ void TaskIA(void* pv) {
         // Atualiza estado web (sem mutex — eventual consistency OK)
         strlcpy(gWebState.label, ir.label, sizeof(gWebState.label));
         gWebState.confianca = ir.confianca;  // 0.0-1.0; a API multiplica por 100
+        gWebState.inf_ms    = ir.infMs;
         for (int i=0; i<4; i++) gWebState.scores[i] = ir.scores[i];
 
         // Rastreia heap mínimo

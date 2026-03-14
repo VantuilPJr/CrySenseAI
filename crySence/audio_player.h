@@ -26,7 +26,7 @@
 #define MIC_SCK     14
 #define MIC_PORT    I2S_NUM_0
 #define SAMPLE_RATE 16000
-#define GAIN_MULTIPLIER 2.5f
+#define GAIN_MULTIPLIER 5.0f
 
 #define AUDIO_SPIFFS_PATH "/audio_colica.wav"
 
