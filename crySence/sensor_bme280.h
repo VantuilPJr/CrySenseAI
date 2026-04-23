@@ -1,21 +1,3 @@
-// =============================================================================
-// CrySense AI v2.0 — sensor_bme280.h
-// Sensor BME280 (temperatura, umidade, pressão) via I2C
-// Thread-safe via mutex FreeRTOS
-// =============================================================================
-//
-// Pinagem do BME280:
-//   VCC  → 3.3V
-//   GND  → GND
-//   SCL  → pino de clock I2C (definido em BME280_SCL_PIN)
-//   SDA  → pino de dados I2C (definido em BME280_SDA_PIN)
-//   CSB  → Chip Select / modo de barramento
-//            CSB ligado a VCC  → modo I2C (recomendado)
-//            CSB ligado a GND  → modo SPI
-//   SDO  → Seleção do endereço I2C secundário
-//            SDO ligado a GND  → endereço 0x76
-//            SDO ligado a VCC  → endereço 0x77
-// =============================================================================
 #pragma once
 #include <Wire.h>
 #include <Adafruit_BME280.h>

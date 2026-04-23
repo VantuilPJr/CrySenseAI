@@ -1,0 +1,4 @@
+-IC:/Arduino/crySense_ai/crySence_hardened/crySence/libs/CrySense_AI_inferencing/src
+-IC:/Arduino/crySense_ai/crySence_hardened/crySence/libs/CrySense_AI_inferencing/src/edge-impulse-sdk
+-IC:/Arduino/crySense_ai/crySence_hardened/crySence/libs/CrySense_trigger_inferencing/src
+-IC:/Arduino/crySense_ai/crySence_hardened/crySence/libs/CrySense_trigger_inferencing/src/edge-impulse-sdk

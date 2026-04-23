@@ -1,0 +1,334 @@
+# CrySense AI v2.0 — Plano de Implementação
+
+Sistema embarcado em ESP32-S3 para monitoramento de choro de bebê com IA, conectividade Firebase, display OLED, sensor climático e interface web de performance. Desenvolvido como TDE da PUCPR — Performance de Sistemas Ciberfísicos.
+
+---
+
+## Análise da Biblioteca Edge Impulse
+
+> **Modelo:** `CrySense_AI` (project_id: 922684, deploy_version: 2)  
+> **Pipeline:** MFCC (13 coef., FFT 256, 32 filtros, 20ms frame/stride) → TFLite INT8 quantizado (EON Compiler)  
+> **Classes:** `colic`, `discomfort`, `hunger`, `noise`, `sleep`  
+> **Performance on-device:** 1ms inferência, 4.7KB RAM pico, 33.5KB flash  
+> **Acurácia:** 79.5% — **colic: 100%**, hunger: 82.9%, discomfort: 75.9%, noise: 64.3%, sleep: 61.5%  
+> **Input:** 16.000 amostras @ 16kHz (1 segundo), divididas em 4 slices  
+> **Threshold integrado do modelo:** 0.6 (mas código usa 0.30 — ajuste necessário)
+
+> [!IMPORTANT]
+> O modelo tem 100% de acurácia para cólica — a prioridade de MVP é bem justificada.
+> O código atual usa `CONFIANCA_MINIMA = 0.30f`, abaixo do `EI_CLASSIFIER_THRESHOLD = 0.6` definido pelo modelo. Devemos alinhar para 0.60f no mínimo para evitar falsos positivos.
+
+---
+
+## User Review Required
+
+> [!WARNING]
+> **Firebase RTDB:** É necessário criar um projeto Firebase e adicionar as credenciais (URL do RTDB e API Key) ao código. Você precisará me fornecer essas chaves ou criar um arquivo `secrets.h` com elas antes da compilação.
+
+> [!WARNING]
+> **White noise ([musica.h](file:///c:/Arduino/crySense_ai/crySence/musica.h)):** O arquivo atual contém `musica_final.wav` (música de mitigação). Para cólica, o requisito é **ruído branco**. Precisamos de um novo arquivo `whitenoise.h` gerado a partir de um WAV de ruído branco (formato: PCM 16-bit mono 16kHz). Posso gerar o array sinteticamente no próprio código para evitar um arquivo .h grande.
+
+> [!IMPORTANT]
+> **Pinos disponíveis:** Confirme os pinos GPIO para: BME280 (I2C SDA/SCL) e OLED SSD1306 (I2C — mesmo barramento do BME280 é possível). Pins sugeridos: SDA=8, SCL=9 (I2C padrão do ESP32-S3).
+
+---
+
+## Arquitetura do Sistema
+
+```mermaid
+graph TD
+    MIC[INMP441\nI2S_0] --> TaskAudio
+    TaskAudio --> |inference_buffer| TaskIA
+    TaskIA --> |resultado| TaskDecisao
+    TaskDecisao --> |cólica| TaskSpeaker
+    TaskDecisao --> |alerta| TaskFirebase
+    TaskDecisao --> |dados| TaskDisplay
+    TaskDecisao --> |log| TaskWebServer
+    BME280[BME280\nI2C] --> TaskSensores
+    TaskSensores --> |temp/umidade| TaskDecisao
+    TaskSpeaker --> SPK[MAX98357A\nI2S_1]
+    TaskFirebase --> FIREBASE[(Firebase RTDB)]
+    TaskDisplay --> OLED[SSD1306\nI2C]
+    TaskWebServer --> WEB[Interface Web\nESP32 AP/STA]
+```
+
+### Tasks FreeRTOS
+
+| Task | Core | Prioridade | Stack | Função |
+|---|---|---|---|---|
+| `TaskAudio` | Core 1 | 5 | 8KB | Captura I2S → inference_buffer via queue |
+| `TaskIA` | Core 1 | 4 | 16KB | `run_classifier` → resultado via queue |
+| `TaskDecisao` | Core 0 | 3 | 4KB | Filtro de estado, Firebase, lógica BME280 |
+| `TaskSensores` | Core 0 | 2 | 4KB | Leitura BME280 periódica (5s), OLED |
+| `TaskWebServer` | Core 0 | 1 | 12KB | Servidor HTTP async, logs, performance |
+
+**Comunicação entre tasks:** `QueueHandle_t` (sem bloqueio — `portMAX_DELAY` apenas em TaskAudio)  
+**Sem nenhum `delay()` bloqueante** — todo timing via `vTaskDelay()` ou timers FreeRTOS
+
+---
+
+## Proposed Changes
+
+### Novos Arquivos a Criar
+
+---
+
+#### [NEW] secrets.h
+```
+// Credenciais do Firebase e WiFi — NÃO versionar no GitHub
+#define WIFI_SSID     "seu_ssid"
+#define WIFI_PASS     "sua_senha"
+#define FIREBASE_URL  "https://seu-projeto.firebaseio.com"
+#define FIREBASE_AUTH "sua_api_key"
+```
+
+---
+
+### Componente 1 — Firmware Principal
+
+#### [MODIFY] [crySence.ino](file:///c:/Arduino/crySense_ai/crySence/crySence.ino)
+
+Reescrita completa com arquitetura FreeRTOS:
+
+- **Remove:** [loop()](file:///c:/Arduino/crySense_ai/crySence/crySence.ino#238-290) / [setup()](file:///c:/Arduino/crySense_ai/crySence/crySence.ino#229-237) monolíticos, `delay()`, hibernação imediata
+- **Adiciona:**
+  - [setup()](file:///c:/Arduino/crySense_ai/crySence/crySence.ino#229-237) inicializa hardware + cria 5 tasks
+  - `TaskAudio`: captura I2S contínua via sliced inference (`run_classifier_continuous`)
+  - `TaskIA`: inferência com `EI_CLASSIFIER_SLICES_PER_MODEL_WINDOW = 4`
+  - `TaskDecisao`: filtro circular + lógica de prioridade cólica + fusão com BME280
+  - `TaskSensores`: BME280 + OLED, interrupt-free (polling com `vTaskDelay`)
+  - `TaskWebServer`: AsyncWebServer na porta 80
+
+**Lógica de detecção de choro (MVP):**
+```
+1. Ignorar NOISE e SLEEP com alta confiança → não registra no buffer
+2. Score mínimo: 0.60 (alinhado ao EI_CLASSIFIER_THRESHOLD)
+3. CÓLICA: gatilho = 3/10, prioridade máxima → ruído branco imediato
+4. FOME/DESCONFORTO: gatilho = 4/10 → apenas alerta Firebase/OLED
+5. Se DESCONFORTO e temperatura > 28°C ou < 18°C → boostamos confiança +0.1
+6. Sem choro detectado após 60 ciclos → volta estado normal (sem deep sleep imediato)
+```
+
+**Gerenciamento de energia:**
+- Sem choro por 10 minutos → Light Sleep (WiFi mantido via `esp_wifi_set_ps(WIFI_PS_MIN_MODEM)`)
+- Configurável via interface web
+
+---
+
+### Componente 2 — Firebase RTDB
+
+#### [NEW] firebase_manager.h / firebase_manager.cpp
+
+Usando biblioteca `Firebase ESP32 Client` (Mobizt):
+
+```cpp
+// Estrutura de dados no RTDB:
+/crySense/
+  status/
+    ultimo_alerta: "colica"      // string
+    confianca: 0.95              // float
+    timestamp: 1741723210        // unix timestamp
+    temperatura: 23.5            // float BME280
+    umidade: 65.2                // float BME280
+    sistema_ativo: true
+  historico/
+    {timestamp}/
+      tipo: "hunger"
+      confianca: 0.82
+      temperatura: 24.1
+```
+
+- Envia dados em evento de alerta (não polling)
+- Heartbeat a cada 60s (`sistema_ativo` + timestamp)
+- Usa `FirebaseJson` para serialização
+- Retries automáticos com backoff
+
+---
+
+### Componente 3 — Sensor BME280
+
+#### [NEW] sensor_bme280.h
+
+- Biblioteca: `Adafruit BME280` (I2C, endereço 0x76)
+- Pinos: SDA=8, SCL=9 (I2C_0)
+- Leitura a cada 5 segundos via `TaskSensores`
+- Fusão com decisão de desconforto:
+  - `temp > 28°C` → ambiente quente → aumenta peso de desconforto
+  - `temp < 18°C` → ambiente frio → idem
+  - `umidade > 70%` → ambiente úmido → fator de desconforto
+
+---
+
+### Componente 4 — Display OLED SSD1306
+
+#### [NEW] display_manager.h
+
+- Biblioteca: `Adafruit SSD1306` (I2C, 128×64, mesmo barramento BME280)
+- Estados do display:
+
+| Tela | Conteúdo |
+|---|---|
+| Normal | `CrySense AI`, Temp/Umidade, hora |
+| Alerta Cólica | `⚠ CÓLICA!`, barra de confiança, ruído branco ativo |
+| Alerta Fome | `🍼 FOME!`, confiança |
+| Alerta Desconforto | `😣 DESCONFORTO`, temp ambiente |
+| Alerta Sono | `😴 SONO`, confiança |
+
+- Interrupção por hardware não usada no OLED (polling periódico via task)
+
+---
+
+### Componente 5 — Ruído Branco (Substituição da Música)
+
+#### [NEW] white_noise_gen.h
+
+Em vez de carregar arquivo WAV grande em flash, **geração matemática em tempo real**:
+
+```cpp
+// Gerador LFSR (Linear Feedback Shift Register) — leve e eficiente
+// Produz ruído branco PCM 16-bit filtrado (pink noise-like) para bebês
+// Sem arquivo .h em flash — zero uso de memória de programa extra
+void iniciarRuidoBranco();  // inicia TaskRuidoBranco
+void pararRuidoBranco();    // sinaliza stop via flag atômico
+```
+
+> [!NOTE]
+> [musica.h](file:///c:/Arduino/crySense_ai/crySence/musica.h) (4.9 MB) pode ser removido para economizar flash. O ruído branco sintético é comprovadamente eficaz para acalmar bebês com cólica.
+
+---
+
+### Componente 6 — Interface Web Embarcada
+
+#### [NEW] web_server.h
+
+`AsyncWebServer` + `AsyncTCP` na porta 80. Páginas servidas via SPIFFS ou strings literais.
+
+**Guias da interface:**
+
+| Guia | Conteúdo |
+|---|---|
+| **Performance** | CPU %, heap livre, PSRAM, tempo de inferência, uptime, gráfico temporal |
+| **Sensores** | Temperatura, umidade, histórico gráfico (Chart.js) |
+| **IA Status** | Label atual, confiança, distribuição das 5 classes |
+| **Logs** | Tabela paginada (erro/warning/info), exportar CSV |
+| **Config** | SSID WiFi, threshold de confiança, freq. leitura sensores, volume ruído branco |
+| **Sobre** | Nome universidade, integrantes, e-mails, link GitHub |
+| **Changelog** | Histórico de versões do sistema |
+
+**Endpoints REST:**
+```
+GET  /api/status      → JSON com estado atual
+GET  /api/performance → métricas de CPU/memória
+GET  /api/logs        → array de logs JSON
+GET  /api/logs/csv    → exportação CSV
+POST /api/config      → atualizar configurações (WiFi sem reflash via NVS)
+GET  /api/history     → histórico 24h de detecções
+```
+
+**Persistência (mín. 24h):**  
+Logs armazenados em SPIFFS com rotação circular. Cada entrada ≈ 80 bytes → 1MB SPIFFS suporta ~12.800 entradas ≈ mais de 24h (com ciclos de 7s).
+
+---
+
+### Componente 7 — Gerenciamento de Energia
+
+- `WIFI_PS_MIN_MODEM`: always-on, mínimo consumo
+- Light Sleep configurável (padrão: inativo por 10 min)
+- Deep Sleep NÃO usado (WiFi/Firebase devem permanecer ativos)
+- Wakeup por I2S interrupt (configurado como fonte de wakeup)
+
+---
+
+### Componente 8 — Interrupts de Hardware
+
+Conforme requisito do TDE (uso obrigatório de interrupção de hardware):
+
+- **GPIO interrupt:** Botão físico de reset do estado (pino configurável, ex: GPIO 0 — boot button do ESP32-S3)
+- ISR: `IRAM_ATTR` — seta flag atômica para reset do histórico de choro
+- Também pode ser usado para silenciar ruído branco manualmente
+
+---
+
+## Bibliotecas Necessárias (Arduino Library Manager)
+
+| Biblioteca | Versão | Uso |
+|---|---|---|
+| `Firebase ESP32 Client` (Mobizt) | ≥4.4 | Firebase RTDB |
+| `Adafruit BME280 Library` | ≥2.2 | Sensor BME280 |
+| `Adafruit SSD1306` | ≥2.5 | Display OLED |
+| `Adafruit GFX Library` | ≥1.11 | Dependência OLED |
+| `AsyncTCP` | ≥1.1 | Servidor web async |
+| `ESPAsyncWebServer` | ≥1.2 | Servidor web async |
+| `ArduinoJson` | ≥7.0 | Serialização JSON |
+
+---
+
+## Estrutura de Arquivos Final
+
+```
+crySence/
+├── crySence.ino          ← firmware principal (reescrito)
+├── secrets.h             ← [NEW] credenciais (gitignore)
+├── firebase_manager.h    ← [NEW] Firebase RTDB
+├── sensor_bme280.h       ← [NEW] BME280
+├── display_manager.h     ← [NEW] OLED SSD1306
+├── white_noise_gen.h     ← [NEW] gerador de ruído branco
+├── web_server.h          ← [NEW] interface web
+├── log_manager.h         ← [NEW] sistema de logs SPIFFS
+├── config_manager.h      ← [NEW] configurações via NVS
+├── musica.h              ← (mantido por compatibilidade, opcional remover)
+└── CrySense_AI_inferencing/  ← biblioteca Edge Impulse (inalterada)
+```
+
+---
+
+## Verification Plan
+
+### Compilação
+```
+1. Abrir crySence.ino no Arduino IDE 2.x
+2. Selecionar: Board = "ESP32S3 Dev Module", PSRAM = "OPI PSRAM"
+3. Sketch → Verify/Compile (Ctrl+R)
+4. Esperado: 0 erros, warnings apenas do SDK Edge Impulse
+```
+
+### Testes por Módulo (Serial Monitor @ 115200)
+
+| Teste | Log esperado |
+|---|---|
+| Boot | `[BOOT] CrySense AI v2.0 iniciando...` |
+| WiFi | `[WIFI] Conectado: <SSID> IP: 192.168.x.x` |
+| Firebase | `[FIREBASE] Conectado ao RTDB` |
+| BME280 | `[BME] Temp: 23.5°C  Umidade: 62.1%` |
+| OLED | Tela "CrySense AI" visível no display |
+| IA Cólica | `[IA] colic 97.3% → ALERTA CÓLICA → ruído branco iniciado` |
+| Web | Acessar `http://<IP>/` no navegador → interface carrega |
+
+### Teste de Integração Firebase
+1. Compilar e flashar no ESP32-S3
+2. Abrir console Firebase RTDB
+3. Simular detecção (via Serial: enviar comando de teste)
+4. Verificar nó `/crySense/status/ultimo_alerta` atualizado em < 2s
+
+### Verificação Manual (App Mobile futuro)
+- Os dados estarão em `/crySense/status/` no RTDB
+- O app pode usar listener em tempo real do Firebase SDK
+
+---
+
+## Pinagem Resumida
+
+| Periférico | Pino | Protocolo |
+|---|---|---|
+| Mic INMP441 WS | GPIO 15 | I2S_0 |
+| Mic INMP441 SCK | GPIO 14 | I2S_0 |
+| Mic INMP441 SD | GPIO 13 | I2S_0 |
+| MAX98357A WS | GPIO 18 | I2S_1 |
+| MAX98357A SCK | GPIO 17 | I2S_1 |
+| MAX98357A DIN | GPIO 16 | I2S_1 |
+| MAX98357A SD/EN | GPIO 5 | GPIO |
+| BME280 SDA | GPIO 8 | I2C_0 |
+| BME280 SCL | GPIO 9 | I2C_0 |
+| OLED SSD1306 SDA | GPIO 8 | I2C_0 |
+| OLED SSD1306 SCL | GPIO 9 | I2C_0 |
+| Botão Reset (INT) | GPIO 0 | GPIO IRQ |
