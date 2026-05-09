@@ -1,0 +1,23 @@
+# IDEs
+.vscode/
+build_dbg/
+.tmp_tde_extract/
+.tmp_tde_text.txt
+.DS_Store
+Thumbs.db
+
+# Arduino Build
+*.bin
+*.elf
+*.map
+build/
+.arduino/
+.pio/
+
+# Node
+node_modules/
+.env
+
+# Configs / Security
+secrets.h
+eim_config.toml

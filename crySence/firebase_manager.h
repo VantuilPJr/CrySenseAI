@@ -1,12 +1,9 @@
-// =============================================================================
-// CrySense AI v2.0 — firebase_manager.h
-// Envio de dados para Firebase RTDB via HTTP REST (sem biblioteca externa)
-// Usa WiFiClientSecure para HTTPS
-// =============================================================================
 #pragma once
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include "log_manager.h"
+#include "config_manager.h"
 
 namespace Firebase {
 
@@ -19,13 +16,12 @@ static uint32_t _ultimoOk = 0;
 static bool _patch(const char* fbUrl, const char* fbAuth, const char* path, const String& body) {
     WiFiClientSecure client;
     client.setInsecure(); // aceita qualquer certificado (compatível com todos os projetos Firebase)
-    client.setTimeout(5);
+    client.setTimeout(5000); // BUGFIX #11: timeout em milissegundos para evitar desconexões
 
     HTTPClient http;
     String url = String(fbUrl) + path + ".json?auth=" + String(fbAuth);
     if (!http.begin(client, url)) return false;
     http.addHeader("Content-Type", "application/json");
-    http.setTimeout(5000);
 
     int code = http.PATCH(body);
     bool ok = (code == 200 || code == 204);
@@ -115,17 +111,42 @@ uint32_t totalErros()  { return _erros;  }
 uint32_t msDesdeUltimoOk() { return millis() - _ultimoOk; }
 bool     conectado() { return _iniciado && (millis() - _ultimoOk < 120000); }
 
-// --- Task IOT: Drena fila RTDB e gera Heartbeats de CPU/Heap ---
+// --- Task IOT: Drena fila RTDB, Heartbeats e reconexão WiFi ---
 static void TaskIOT(void* pv) {
     LogManager::info("[TaskIOT] Iniciada no Core 0");
     FirebaseMsg fm;
-    uint32_t tUltimoHB   = 0;
-    uint32_t tUltimoCpu  = 0;
+    uint32_t tUltimoHB       = 0;
+    uint32_t tUltimoCpu      = 0;
+    uint32_t tUltimoWifiCheck = 0;
+    uint32_t tUltimoReconnect = 0;
 
     static uint32_t lastIdle0 = 0, lastIdle1 = 0;
 
     while (true) {
         uint64_t t0 = esp_timer_get_time();
+
+        // =================================================================
+        // BUGFIX: Watchdog de WiFi — reconecta automaticamente se cair.
+        // Verifica a cada 5s. Se desconectado, aguarda 30s entre tentativas
+        // para evitar flood de reconexões (que era o "loop infinito" original).
+        // WiFi.setAutoReconnect(true) e WiFi.persistent(false) já foram
+        // configurados no setup(), isso serve como segurança extra.
+        // =================================================================
+        uint32_t agoraW = millis();
+        if (agoraW - tUltimoWifiCheck >= 5000UL) {
+            tUltimoWifiCheck = agoraW;
+            if (WiFi.status() != WL_CONNECTED && WiFi.getMode() == WIFI_STA) {
+                if (agoraW - tUltimoReconnect >= 30000UL) {
+                    tUltimoReconnect = agoraW;
+                    Serial.println("[WiFi] Conexão perdida — tentando reconectar...");
+                    WiFi.reconnect();
+                }
+            } else if (WiFi.status() == WL_CONNECTED) {
+                // Atualiza IP no estado web ao reconectar
+                strncpy(gWebState.ip, WiFi.localIP().toString().c_str(), sizeof(gWebState.ip));
+                gWebState.wifi_ok = true;
+            }
+        }
 
         if (!_iniciado) {
             vTaskDelay(pdMS_TO_TICKS(5000));
@@ -189,8 +210,12 @@ static void TaskIOT(void* pv) {
     }
 }
 
-static void beginTask() {
-    xTaskCreatePinnedToCore(TaskIOT, "TaskIOT", 8192, nullptr, 1, nullptr, 0);
+static void beginTask(TaskHandle_t* pTaskIOT = nullptr) {
+    TaskHandle_t hTask = nullptr;
+    xTaskCreatePinnedToCore(TaskIOT, "TaskIOT", 8192, nullptr, 1, &hTask, 0);
+    if (pTaskIOT) {
+        *pTaskIOT = hTask;
+    }
 }
 
 } // namespace Firebase

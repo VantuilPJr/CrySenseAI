@@ -1,0 +1,107 @@
+Escola/ Câmpus:
+Escola Politécnica
+Curso:
+Engenharia de Software
+Ano/Semestre:
+2026/1
+Código/Nome da disciplina:
+Performance em Sistemas Ciberfísicos
+Professor Responsável:
+Fábio Bettio
+V.1.1
+1. Introdução
+Este Trabalho Discente Efetivo consiste no desenvolvimento de um sistema ciberfísico real (sem simuladores) e funcional, baseado em ESP32, integrando hardware, firmware e software. O projeto tem como foco a aplicação prática de conceitos de desempenho, concorrência, paralelismo, gerenciamento de recursos computacionais, persistência de dados e monitoramento por meio de interface web.O trabalho deve ser conduzido e documentado segundo rigor acadêmico, com estrutura, escrita, citações e formatação integralmente conforme as normas da ABNT.
+2. Objetivo
+Desenvolver, implementar e validar um sistema ciberfísico real, com interface web embarcada, capaz de monitorar desempenho, registrar logs, gerenciar energia e permitir configuração dinâmica, aplicando os conceitos estudados na disciplina de Performance de Sistemas Ciberfísicos.
+3. Requisitos do Sistema
+3.1 Requisitos Funcionais
+Interface web embarcada no sistema
+Guia única de Performance, concentrando obrigatoriamente:
+Uso de CPU
+Uso de memória (heap, stack, flash e PSRAM, quando aplicável)
+Tempo de execução de no mínimo cinco funções principais do sistema
+Dados dos sensores
+Informações de tasks/threads
+Estado da conexão Wi-Fi e do ponto de acesso
+Gráficos de performance, séries temporais e uso de recursos
+Sistema de logs:
+Logs de erro, warning e informação
+Exportação dos logs
+Área de configuração via interface web:
+Frequência de leitura dos sensores
+Parâmetros operacionais do sistema
+Configuração e troca do ponto de acesso Wi-Fi, sem necessidade de regravação do firmware
+Guia “Sobre” contendo:
+Nome da universidade
+Nome completo dos integrantes
+E-mail de contato
+Link para o repositório GitHub do projeto
+Guia de changelog do sistema acessível pela interface gráfica
+3.2 Requisitos Não Funcionais
+Persistência de todas as informações do sistema, com histórico mínimo de 24 horas
+Proibição de rotinas bloqueantes (ex.: delay())
+Uso de mais de uma task
+Uso de interrupção de hardware
+Implementação de gerenciamento de energia:
+Light Sleep ou
+Deep Sleep
+Linguagem de desenvolvimento:
+C/C++ ou
+MicroPython, considerando explicitamente suas limitações de performance
+Código versionado em repositório público no GitHub
+3.3 Requisitos de Hardware
+Mínimo de dois sensores de entrada
+Mínimo de dois dispositivos de acionamento, não sendo LEDs nem buzzers
+Sistema acondicionado em caixa física apropriada
+Montagem organizada, segura e funcional
+Sistema entregue fisicamente montado e em funcionamento
+Não serão aceitos simuladores, emuladores ou projetos exclusivamente virtuais.
+4. Fundamentação Teórica
+A fundamentação teórica deve abordar, de forma objetiva e referenciada:
+Sistemas ciberfísicos
+Concorrência e paralelismo em sistemas embarcados
+Gerenciamento de memória e desempenho
+Sistemas operacionais embarcados e uso de RTOS
+Gerenciamento de energia em dispositivos IoT
+Monitoramento, logging e observabilidade em sistemas computacionais
+Observabilidade refere-se à capacidade do sistema expor logs, métricas e dados de execução que permitam compreender seu comportamento, estado interno e desempenho ao longo do tempo.
+Todas as citações devem seguir rigorosamente as normas da ABNT.
+5. Metodologia
+O desenvolvimento do trabalho deve seguir uma abordagem incremental e iterativa, contemplando planejamento do sistema, desenvolvimento modular do firmware, integração progressiva de sensores, atuadores e interface web, execução de testes contínuos e avaliação de desempenho. As atividades são realizadas de forma integrada entre momentos presenciais e extraclasse, caracterizando o Trabalho Discente Efetivo.
+6. Desenvolvimento do Sistema
+Este capítulo deve descrever detalhadamente:
+Arquitetura geral do sistema
+Organização do firmware
+Estrutura das tasks
+Uso de interrupções de hardware
+Estratégias de gerenciamento de energia
+Estrutura e organização da interface web
+Mecanismos de persistência de dados
+7. Testes e Validação
+7.1 Testes Isolados
+Testes individuais dos sensores
+Testes individuais dos atuadores
+Testes isolados dos módulos de software
+Validação funcional de cada componente
+7.2 Testes de Integração
+Integração entre sensores, atuadores e firmware
+Integração entre firmware e interface web
+Validação da persistência dos dados
+Avaliação de desempenho e consumo de energia
+8. Resultados
+Apresentação e análise dos resultados obtidos, incluindo métricas de desempenho, comportamento do sistema, consumo de recursos e evidências coletadas por meio da interface web.
+9. Conclusão
+Análise crítica do projeto desenvolvido, destacando os resultados alcançados, limitações identificadas, decisões de projeto adotadas e possibilidades de evolução do sistema.
+10. Referências
+Todas as referências bibliográficas devem ser apresentadas obrigatoriamente conforme as normas da ABNT.
+Todo o documento — estrutura, escrita, citações, figuras, tabelas e referências — deve seguir integralmente o padrão ABNT.
+11. Critérios de Avaliação
+A avaliação do Trabalho Discente Efetivo considera o atendimento aos requisitos técnicos, a qualidade da implementação, a execução física do projeto, a documentação acadêmica e a aderência aos conceitos da disciplina. Projetos não entregues fisicamente montados e funcionando, ou baseados em simuladores/emuladores, serão considerados incompletos.
+11.1 Rubrica de Avaliação (Resumo)
+Implementação Técnica do Sistema – 30%Arquitetura, organização do firmware, multitarefa, interrupções e ausência de rotinas bloqueantes.
+Interface Web e Monitoramento – 20%Guia única de performance, métricas, gráficos e configurações, incluindo troca do ponto de acesso Wi-Fi.
+Persistência e Logs – 15%Persistência (mín. 24h), logs e capacidade de análise do comportamento do sistema.
+Hardware e Execução Física do Projeto – 15%Sensores, atuadores, montagem em caixa e funcionamento real do sistema.
+Gerenciamento de Energia e Performance – 10%Uso de técnicas de economia de energia e análise de desempenho.
+Documentação Acadêmica (ABNT) – 10%Estrutura acadêmica, descrição de testes e conformidade integral com ABNT.
+Defesa e Originalidade do Projeto – Critério EliminatórioCapacidade de defender tecnicamente o projeto, demonstrar domínio do sistema e evidenciar originalidade. A reprodução direta de tutoriais, ausência de autoria intelectual ou incapacidade de justificar decisões técnicas pode resultar em reprovação, independentemente da pontuação obtida.

@@ -4,6 +4,8 @@
 // Permite troca de WiFi/parâmetros sem reflash via interface web
 // =============================================================================
 #pragma once
+#include <math.h>
+#include <string.h>
 #include <Preferences.h>
 #include "secrets.h"
 
@@ -13,14 +15,18 @@ struct CryConfig {
     char  firebase_url[128];
     char  firebase_auth[128];
     char  audio_url[200];      // URL de áudio na nuvem (opcional)
+    char  classifier_url[200]; // Endpoint remoto para classificar o choro
     float confianca_minima;    // Threshold de confiança da IA (0.0-1.0)
     float temp_max_conforto;   // Temp. máx. confortável (°C) — padrão 28
     float temp_min_conforto;   // Temp. mín. confortável (°C) — padrão 18
+    float rms_threshold;       // Limiar RMS de silêncio (padrão 0.025)
+    uint32_t classifier_timeout_ms; // Timeout da classificação remota (ms)
     uint32_t sensor_intervalo_ms; // Intervalo leitura BME280 (ms)
     uint8_t  volume_audio;     // Volume do áudio (0-100)
     uint32_t light_sleep_min;  // Minutos inativo para light sleep (0=desativado)
     uint8_t  gatilho_decisao;  // Acertos mínimos no buffer para alerta
     uint8_t  gatilho_silencio; // Acertos silêncio para resetar crise
+    char     ota_password[33]; // Senha para update OTA via web
 };
 // =============================================================================
 // ESTRUTURAS COMPARTILHADAS (Tipos e Filas Globais)
@@ -30,10 +36,17 @@ struct CryConfig {
 #include <freertos/queue.h>
 
 #define TAMANHO_BUFFER      10
-#define LABEL_HUNGER     "hunger"
-#define LABEL_COLIC      "colic"
-#define LABEL_SLEEP      "sleep"
-#define LABEL_NOISE      "noise"
+
+// =============================================================================
+// LABELS DOS MODELOS EDGE IMPULSE
+// =============================================================================
+// IA 1 — CrySense_TRIGGER (projeto 935943): classifica SOMENTE 2 classes.
+//         Usado em run_trigger_model() dentro de TaskIA como portão (gate).
+//         O resultado NUNCA sai de TaskIA — é consumido e descartado internamente.
+#define LABEL_CRY        "cry"    // Classe do TRIGGER: detectou choro
+#define LABEL_NOISE      "noise"  // Classe do TRIGGER e saída do sistema: não é choro
+#define LABEL_HUNGER     "hunger" // Classificador: choro de fome
+#define LABEL_COLIC      "colic"  // Classificador: choro de cólica/dor
 
 enum TipoChoro { SILENCIO_RUIDO=0, FOME=1, COLICA_DOR=2, SONO=3 };
 
@@ -63,10 +76,56 @@ struct InferenceResult {
     bool  isSilencioReal;
 };
 
+struct AudioClipMsg {
+    uint8_t* wavData;
+    size_t   wavLen;
+    float    triggerConf;
+    uint32_t ts_s;
+};
+
+struct RemoteClassResult {
+    bool  ok;
+    char  label[16];
+    float confianca;
+    float scores[4];
+    uint32_t latency_ms;
+    char  erro[64];
+};
+
 struct FirebaseMsg {
     char tipo[16];
     float confianca, temp, umid;
     bool acalmado;
+};
+
+// =============================================================================
+// ANALYTICS — Histórico de episódios de choro (em RAM, sem Flash)
+// Até 48 eventos circulares — suficiente para 2 dias com choro a cada hora
+// =============================================================================
+#define ANALYTICS_MAX_EVENTS 48
+
+struct CryEvent {
+    uint32_t ts_s;       // timestamp relativo ao boot (segundos)
+    char     tipo[16];   // "COLICA", "FOME", "CALMO"
+    uint8_t  confianca;  // 0-100
+    float    temp;       // temperatura no momento
+    float    umid;       // umidade no momento
+};
+
+struct AnalyticsState {
+    CryEvent eventos[ANALYTICS_MAX_EVENTS];
+    int      head   = 0;
+    int      count  = 0;
+
+    void registrar(const char* tipo, uint8_t conf, float t, float u, uint32_t uptime_s) {
+        eventos[head].ts_s      = uptime_s;
+        strlcpy(eventos[head].tipo, tipo, sizeof(eventos[head].tipo));
+        eventos[head].confianca = conf;
+        eventos[head].temp      = t;
+        eventos[head].umid      = u;
+        head = (head + 1) % ANALYTICS_MAX_EVENTS;
+        if (count < ANALYTICS_MAX_EVENTS) count++;
+    }
 };
 
 struct WebDashboardState {
@@ -80,10 +139,18 @@ struct WebDashboardState {
     // IA
     char     label[16];
     float    confianca;
-    float    scores[4];           // colic, hunger, noise, sleep
-    String   estado;              // "calmo" | "crise" | "monitorando"
+    float    scores[4];           // colic, hunger, noise, reservado
+    char     estado[16] = "calmo"; // "calmo" | "crise" | "monitorando"
     bool     audio_ativo;
     char     ultimo_alerta[16];
+    // Pipeline remoto (detecção local + classificação no notebook)
+    char     pipeline[20] = "idle"; // idle|recording|uploading|waiting_result|result|error
+    bool     remote_busy = false;
+    char     result_label[16] = "noise";
+    float    result_conf = 0.0f;
+    uint32_t remote_latency_ms = 0;
+    uint32_t remote_ok = 0;
+    uint32_t remote_err = 0;
     // Sensores
     float    temp, umid, pres;
     bool     conforto_ok;
@@ -94,9 +161,12 @@ struct WebDashboardState {
 // Declarações externas das Globais do Sistema
 extern SistemaState gState;
 extern WebDashboardState gWebState;
+extern AnalyticsState    gAnalytics;
 extern SemaphoreHandle_t semAudioPronto;
 extern QueueHandle_t     qResultadoIA;
 extern QueueHandle_t     qFirebase;
+extern QueueHandle_t     qAudioUpload;
+extern QueueHandle_t     qRemoteResult;
 
 // =============================================================================
 
@@ -113,14 +183,24 @@ static void _setDefaults() {
     strlcpy(_cfg.firebase_url,  FIREBASE_URL,  sizeof(_cfg.firebase_url));
     strlcpy(_cfg.firebase_auth, FIREBASE_AUTH, sizeof(_cfg.firebase_auth));
     strlcpy(_cfg.audio_url,   AUDIO_CLOUD_URL, sizeof(_cfg.audio_url));
-    _cfg.confianca_minima    = 0.70f;  // 70% — limiar ajustado
+    strlcpy(_cfg.classifier_url, "http://10.108.70.59:8000/classify", sizeof(_cfg.classifier_url));
+    // Requisito operacional: trigger de choro apenas com confiança >= 75%.
+    _cfg.confianca_minima    = 0.75f;
     _cfg.temp_max_conforto   = 28.0f;
     _cfg.temp_min_conforto   = 18.0f;
+    // Ajuste de sensibilidade: 0.025 estava alto para cenários de microfone
+    // distante, fazendo choro real cair como SILENCIO em campo.
+    _cfg.rms_threshold       = 0.010f;
+    _cfg.classifier_timeout_ms = 12000;
     _cfg.sensor_intervalo_ms = 5000;
     _cfg.volume_audio        = 100;
     _cfg.light_sleep_min     = 10;
-    _cfg.gatilho_decisao     = 7;   // 7/10 ciclos para validar tipo de choro
-    _cfg.gatilho_silencio    = 6;
+    _cfg.gatilho_decisao     = 3;   // Janela 5 amostras: mínimo 3 válidas
+    // BUGFIX: Reduzido de 6 para 3. O cap no .ino era 5, mas o threshold alto
+    // de silêncio fazia que 6 ciclos nunca fossem atingidos, travando a crise.
+    // Com 3 ciclos, o sistema reseta mais rápido após o bebê se acalmar.
+    _cfg.gatilho_silencio    = 3;
+    strlcpy(_cfg.ota_password, "84194129", sizeof(_cfg.ota_password));
 }
 
 // --- Carrega configurações da NVS ---
@@ -132,36 +212,107 @@ void load() {
     _prefs.getString("fb_url",      _cfg.firebase_url, sizeof(_cfg.firebase_url));
     _prefs.getString("fb_auth",     _cfg.firebase_auth,sizeof(_cfg.firebase_auth));
     _prefs.getString("audio_url",   _cfg.audio_url,    sizeof(_cfg.audio_url));
+    _prefs.getString("cls_url",     _cfg.classifier_url, sizeof(_cfg.classifier_url));
     _cfg.confianca_minima    = _prefs.getFloat("conf_min",     _cfg.confianca_minima);
     _cfg.temp_max_conforto   = _prefs.getFloat("temp_max",     _cfg.temp_max_conforto);
     _cfg.temp_min_conforto   = _prefs.getFloat("temp_min",     _cfg.temp_min_conforto);
+    _cfg.rms_threshold       = _prefs.getFloat("rms_thr",      _cfg.rms_threshold);
+    _cfg.classifier_timeout_ms = _prefs.getUInt("cls_tmo", _cfg.classifier_timeout_ms);
     _cfg.sensor_intervalo_ms = _prefs.getUInt( "sensor_ms",    _cfg.sensor_intervalo_ms);
     _cfg.volume_audio        = _prefs.getUChar("volume",       _cfg.volume_audio);
     _cfg.light_sleep_min     = _prefs.getUInt( "sleep_min",    _cfg.light_sleep_min);
     _cfg.gatilho_decisao     = _prefs.getUChar("gatilho_d",    _cfg.gatilho_decisao);
     _cfg.gatilho_silencio    = _prefs.getUChar("gatilho_s",    _cfg.gatilho_silencio);
+    _prefs.getString("ota_pass", _cfg.ota_password, sizeof(_cfg.ota_password));
     _prefs.end();
     _loaded = true;
 }
 
-// --- Salva configurações na NVS ---
-void save(const CryConfig& novo) {
-    _cfg = novo;
+// --- Salva configurações na NVS (somente campos alterados) ---
+// Retorna true quando houve gravação física na flash.
+bool save(const CryConfig& novo) {
+    const float eps = 0.0001f;
+
+    // Não toca na flash quando nada mudou.
+    if (memcmp(&_cfg, &novo, sizeof(CryConfig)) == 0) {
+        return false;
+    }
+
+    bool wrote = false;
     _prefs.begin("crysense", false); // read-write
-    _prefs.putString("wifi_ssid",  _cfg.wifi_ssid);
-    _prefs.putString("wifi_pass",  _cfg.wifi_pass);
-    _prefs.putString("fb_url",     _cfg.firebase_url);
-    _prefs.putString("fb_auth",    _cfg.firebase_auth);
-    _prefs.putString("audio_url",  _cfg.audio_url);
-    _prefs.putFloat( "conf_min",   _cfg.confianca_minima);
-    _prefs.putFloat( "temp_max",   _cfg.temp_max_conforto);
-    _prefs.putFloat( "temp_min",   _cfg.temp_min_conforto);
-    _prefs.putUInt(  "sensor_ms",  _cfg.sensor_intervalo_ms);
-    _prefs.putUChar( "volume",     _cfg.volume_audio);
-    _prefs.putUInt(  "sleep_min",  _cfg.light_sleep_min);
-    _prefs.putUChar( "gatilho_d",  _cfg.gatilho_decisao);
-    _prefs.putUChar( "gatilho_s",  _cfg.gatilho_silencio);
+
+    if (strcmp(_cfg.wifi_ssid, novo.wifi_ssid) != 0) {
+        _prefs.putString("wifi_ssid", novo.wifi_ssid);
+        wrote = true;
+    }
+    if (strcmp(_cfg.wifi_pass, novo.wifi_pass) != 0) {
+        _prefs.putString("wifi_pass", novo.wifi_pass);
+        wrote = true;
+    }
+    if (strcmp(_cfg.firebase_url, novo.firebase_url) != 0) {
+        _prefs.putString("fb_url", novo.firebase_url);
+        wrote = true;
+    }
+    if (strcmp(_cfg.firebase_auth, novo.firebase_auth) != 0) {
+        _prefs.putString("fb_auth", novo.firebase_auth);
+        wrote = true;
+    }
+    if (strcmp(_cfg.audio_url, novo.audio_url) != 0) {
+        _prefs.putString("audio_url", novo.audio_url);
+        wrote = true;
+    }
+    if (strcmp(_cfg.classifier_url, novo.classifier_url) != 0) {
+        _prefs.putString("cls_url", novo.classifier_url);
+        wrote = true;
+    }
+    if (fabsf(_cfg.confianca_minima - novo.confianca_minima) > eps) {
+        _prefs.putFloat("conf_min", novo.confianca_minima);
+        wrote = true;
+    }
+    if (fabsf(_cfg.temp_max_conforto - novo.temp_max_conforto) > eps) {
+        _prefs.putFloat("temp_max", novo.temp_max_conforto);
+        wrote = true;
+    }
+    if (fabsf(_cfg.temp_min_conforto - novo.temp_min_conforto) > eps) {
+        _prefs.putFloat("temp_min", novo.temp_min_conforto);
+        wrote = true;
+    }
+    if (fabsf(_cfg.rms_threshold - novo.rms_threshold) > eps) {
+        _prefs.putFloat("rms_thr", novo.rms_threshold);
+        wrote = true;
+    }
+    if (_cfg.classifier_timeout_ms != novo.classifier_timeout_ms) {
+        _prefs.putUInt("cls_tmo", novo.classifier_timeout_ms);
+        wrote = true;
+    }
+    if (_cfg.sensor_intervalo_ms != novo.sensor_intervalo_ms) {
+        _prefs.putUInt("sensor_ms", novo.sensor_intervalo_ms);
+        wrote = true;
+    }
+    if (_cfg.volume_audio != novo.volume_audio) {
+        _prefs.putUChar("volume", novo.volume_audio);
+        wrote = true;
+    }
+    if (_cfg.light_sleep_min != novo.light_sleep_min) {
+        _prefs.putUInt("sleep_min", novo.light_sleep_min);
+        wrote = true;
+    }
+    if (_cfg.gatilho_decisao != novo.gatilho_decisao) {
+        _prefs.putUChar("gatilho_d", novo.gatilho_decisao);
+        wrote = true;
+    }
+    if (_cfg.gatilho_silencio != novo.gatilho_silencio) {
+        _prefs.putUChar("gatilho_s", novo.gatilho_silencio);
+        wrote = true;
+    }
+    if (strcmp(_cfg.ota_password, novo.ota_password) != 0) {
+        _prefs.putString("ota_pass", novo.ota_password);
+        wrote = true;
+    }
+
     _prefs.end();
+    _cfg = novo;
+    return wrote;
 }
 
 // --- Reseta para defaults e apaga NVS ---

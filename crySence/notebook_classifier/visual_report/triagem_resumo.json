@@ -1,0 +1,131 @@
+{
+  "dataset_dir": "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset",
+  "model_path": "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\models\\cry_type_model.joblib",
+  "labels_path": "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\models\\labels.json",
+  "files_per_label": {
+    "colic": 97,
+    "hunger": 98
+  },
+  "samples_processed": 195,
+  "samples_skipped": 0,
+  "accuracy": 0.9743589743589743,
+  "predicted_counts": {
+    "colic": 94,
+    "hunger": 101
+  },
+  "by_true_label": {
+    "colic": {
+      "count": 97.0,
+      "avg_confidence": 0.8599398496837798,
+      "avg_score_colic": 0.8494304983445712,
+      "avg_score_hunger": 0.15056950165542862
+    },
+    "hunger": {
+      "count": 98.0,
+      "avg_confidence": 0.8469781855184374,
+      "avg_score_colic": 0.15503746998379406,
+      "avg_score_hunger": 0.844962530016206
+    }
+  },
+  "confusion_matrix": [
+    [
+      93,
+      4
+    ],
+    [
+      1,
+      97
+    ]
+  ],
+  "frequency_rails_hz": {
+    "colic": [
+      468.75,
+      812.5,
+      968.75,
+      2375.0,
+      2531.25,
+      2687.5
+    ],
+    "hunger": [
+      406.25,
+      843.75,
+      1000.0,
+      1187.5,
+      1343.75,
+      1968.75
+    ]
+  },
+  "amplitude_peak_hz": {
+    "colic": 789.0,
+    "hunger": 876.0
+  },
+  "random_selection": {
+    "samples_per_class": 10,
+    "seed": 42,
+    "selected_files": {
+      "colic": [
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\colic\\Colic2_015.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\colic\\colicaRevisado4.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\colic\\Colic2_014.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\colic\\colicaRevisado30.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\colic\\colicaRevisado13.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\colic\\colicaRevisado60.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\colic\\colicaRevisado38.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\colic\\Colic2_016.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\colic\\colic_000.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\colic\\colicaRevisado5.wav"
+      ],
+      "hunger": [
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\hunger\\sonoRevisado76.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\hunger\\sonoRevisado44.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\hunger\\sonoRevisado4.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\hunger\\sonoRevisado65.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\hunger\\sonoRevisado81.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\hunger\\sonoRevisado24.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\hunger\\sonoRevisado46.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\hunger\\sonoRevisado50.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\hunger\\sonoRevisado58.wav",
+        "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\dataset\\hunger\\sonoRevisado88.wav"
+      ]
+    }
+  },
+  "generated_files": [
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\spectrogram_colic_mean_2d.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\spectrogram_hunger_mean_2d.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\spectrogram_diff_colic_minus_hunger_2d.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\spectrogram_colic_invertido_raias.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\spectrogram_hunger_invertido_raias.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\spectrogram_diff_invertido_raias.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\raias_frequencia_comparativo.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_media_colic.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_media_hunger.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_colic.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_hunger.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\forma_onda_media_leigo.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\triagem_resumo.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\triagem_resumo.json",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_colic_01.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_colic_02.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_colic_03.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_colic_04.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_colic_05.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_colic_06.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_colic_07.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_colic_08.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_colic_09.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_colic_10.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_hunger_01.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_hunger_02.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_hunger_03.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_hunger_04.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_hunger_05.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_hunger_06.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_hunger_07.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_hunger_08.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_hunger_09.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\amplitude_x_frequencia_random_audios\\amplitude_x_frequencia_random_hunger_10.png",
+    "C:\\Arduino\\crySense_ai\\crySence\\notebook_classifier\\visual_report\\spectrogram_means_3d.png"
+  ],
+  "skipped_files": []
+}
