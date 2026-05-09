@@ -15,6 +15,7 @@
 #include <ArduinoOTA.h>
 #include <WiFi.h>
 #include <DNSServer.h>
+#include <ESPmDNS.h>
 
 DNSServer dnsServer;
 
@@ -543,18 +544,6 @@ void setup() {
   Display::mostrarWiFi(true, cfg.wifi_ssid);
   Serial.printf("[WiFi] Conectando a %s...\n", cfg.wifi_ssid);
   WiFi.mode(WIFI_STA);
-
-  // Configuração de IP Fixo (Static IP)
-  IPAddress local_IP(10, 108, 70, 10);
-  IPAddress gateway(10, 108, 70, 1);
-  IPAddress subnet(255, 255, 255, 0);
-  IPAddress primaryDNS(8, 8, 8, 8);
-  IPAddress secondaryDNS(8, 8, 4, 4);
-  
-  if (!WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS)) {
-    Serial.println("[WiFi] Falha ao configurar IP fixo!");
-  }
-
   WiFi.begin(cfg.wifi_ssid, cfg.wifi_pass);
   // BUGFIX: setAutoReconnect garante reconexão automática sem loop manual
   WiFi.setAutoReconnect(true);
@@ -569,6 +558,10 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.printf("\n[WiFi] Conectado! IP: %s\n",
                   WiFi.localIP().toString().c_str());
+                  
+    if (MDNS.begin("crysense")) {
+        Serial.println("[mDNS] Acesso local via http://crysense.local");
+    }
     Display::mostrarWiFi(false, cfg.wifi_ssid,
                          WiFi.localIP().toString().c_str());
     strncpy(gWebState.ip, WiFi.localIP().toString().c_str(),
