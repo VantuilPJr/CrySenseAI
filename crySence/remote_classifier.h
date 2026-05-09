@@ -203,6 +203,10 @@ static bool _postClipHttpRaw(const CryConfig& cfg, const AudioClipMsg& clip, Rem
 
     client.flush();
 
+    uint32_t waitStart = millis();
+    while (client.connected() && client.available() == 0 && (millis() - waitStart) < cfg.classifier_timeout_ms) {
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
     String statusLine = client.readStringUntil('\n');
     statusLine.trim();
     int code = -1;
@@ -219,9 +223,16 @@ static bool _postClipHttpRaw(const CryConfig& cfg, const AudioClipMsg& clip, Rem
         return false;
     }
 
-    while (client.connected()) {
-        String line = client.readStringUntil('\n');
-        if (line == "\r" || line.length() == 0) break;
+    uint32_t hdrStart = millis();
+    while (client.connected() && (millis() - hdrStart) < cfg.classifier_timeout_ms) {
+        if (client.available() > 0) {
+            String line = client.readStringUntil('\n');
+            if (line == "\r" || line == "\r\n" || line.length() == 0) {
+                break; // Fim dos headers
+            }
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(2));
+        }
     }
 
     // BUGFIX #1: Leitura em bloco de 512B → elimina dezenas de realloc() causados
