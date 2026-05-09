@@ -368,7 +368,7 @@ void begin(WebDashboardState *state, CryConfig *cfgPtr) {
 
       if (!index) {
           Serial.printf("[OTA-WEB] Update Start: %s\n", filename.c_str());
-          AudioPlayer::parar();
+          AudioPlayer::_parar = true; // Parada assíncrona para não travar a task LwIP
           if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
               Update.printError(Serial);
           }

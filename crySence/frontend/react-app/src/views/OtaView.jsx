@@ -56,7 +56,9 @@ export default function OtaView() {
             setIsUploading(false);
         };
 
-        xhr.send(file);
+        const formData = new FormData();
+        formData.append('update', file, 'firmware.bin');
+        xhr.send(formData);
     };
 
     return (
