@@ -762,6 +762,21 @@ async def classify(request: Request) -> Any:
     latency_ms = int((time.perf_counter() - t0) * 1000)
     label = result["label"]
     conf = float(result["confianca"])
+    
+    # Lógica de curadoria de áudio para treinamento
+    import shutil
+    try:
+        if conf < 0.75:
+            saved_path.unlink(missing_ok=True)
+            stats.log_event(stage="cleanup", message=f"Audio deletado (< 75% confianca)", request_id=request_id)
+        elif conf >= 0.90 and label in ("hunger", "colic"):
+            train_dir = BASE_DIR / "training_audio" / label
+            train_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(saved_path, train_dir / saved_path.name)
+            stats.log_event(stage="training", message=f"Audio de {label} copiado para treinamento", request_id=request_id)
+    except Exception as e:
+        stats.log_event(stage="curation", level="error", message=f"Erro ao processar arquivo: {e}", request_id=request_id)
+
     stats.add_metric(ok=True, latency_ms=latency_ms, label=label, conf=conf)
     stats.mark_received_file_result(request_id, label, conf)
     stats.set_pipeline(
