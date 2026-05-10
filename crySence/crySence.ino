@@ -47,6 +47,7 @@ QueueHandle_t qFirebase = nullptr;          // Decisao → IOT
 QueueHandle_t qAudioUpload = nullptr;       // Audio -> Classificador remoto
 QueueHandle_t qRemoteResult = nullptr;      // Classificador remoto -> Decisao
 static bool gOtaReady = false;
+bool gOtaInProgress = false; // Flag para suspender acesso a PSRAM durante OTA
 
 // Task handles para controle durante OTA
 static TaskHandle_t hTaskIA = nullptr;
@@ -57,9 +58,9 @@ static TaskHandle_t hTaskHMI = nullptr;
 static TaskHandle_t hTaskIOT = nullptr;
 static TaskHandle_t hTaskRemote = nullptr;
 
-// =============================================================================
+// ================================
 // BUFFER DE INFERÊNCIA (em PSRAM)
-// =============================================================================
+// ================================
 float *inference_buffer = nullptr; // 16000 floats = 64KB → PSRAM
 
 int get_signal_data_callback(size_t offset, size_t length, float *out_ptr) {
@@ -100,8 +101,15 @@ void IRAM_ATTR isrBotaoReset() {
 void TaskIA(void *pv) {
   LogManager::info("[TaskIA] Iniciada no Core 1");
   while (true) {
+    if (gOtaInProgress) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+    
     // Aguarda semáforo do TaskAudio (bloqueante)
     xSemaphoreTake(semAudioPronto, portMAX_DELAY);
+    
+    if (gOtaInProgress) continue;
 
     uint64_t t0 = esp_timer_get_time();
     CryConfig &cfg = ConfigManager::get();
@@ -324,7 +332,6 @@ static void _aplicarResultadoRemoto(const RemoteClassResult& rr) {
   fm.umid = sens.umidade;
   xQueueSend(qFirebase, &fm, 0);
 }
-
 void TaskDecisao(void *pv) {
   LogManager::info("[TaskDecisao] Iniciada no Core 0");
   RemoteClassResult rr;
@@ -340,6 +347,7 @@ void TaskDecisao(void *pv) {
   const uint32_t CAPTURE_COOLDOWN_MS = 9000UL;
 
   while (true) {
+    if (gOtaInProgress) { vTaskDelay(100); continue; }
     // ISR de reset (botão GPIO0)
     if (flagResetISR) {
       // Ignora pulsos espúrios durante o boot/rede inicial.
@@ -693,6 +701,11 @@ void loop() {
 
   if (gOtaReady) {
     ArduinoOTA.handle();
+  }
+
+  if (gOtaInProgress) {
+    vTaskDelay(pdMS_TO_TICKS(100));
+    return;
   }
 
   // Flush do histórico para SPIFFS a cada 30min (não-bloqueante, protege Flash)

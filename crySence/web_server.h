@@ -369,6 +369,7 @@ void begin(WebDashboardState *state, CryConfig *cfgPtr) {
       if (!index) {
           Serial.printf("[OTA-WEB] Update Start: %s\n", filename.c_str());
           AudioPlayer::_parar = true; // Parada assíncrona para não travar a task LwIP
+          gOtaInProgress = true;      // Impede que a TaskMic acesse PSRAM enquanto a Flash é gravada
           if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
               Update.printError(Serial);
           }

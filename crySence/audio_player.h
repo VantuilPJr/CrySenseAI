@@ -295,12 +295,19 @@ size_t tamanhoArquivo() {
     size_t s = f.size(); f.close(); return s;
 }
 
+extern bool gOtaInProgress;
+
 // --- Task de Leitura e Gate do Microfone ---
 static void TaskAudio(void* pv) {
     LogManager::info("[TaskAudio] Iniciada no Core 1");
     const int CHUNK = EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE / 4; 
     float dc_offset = 0.0f; // Filtro passa-alta estimador de Media DC
     while (true) {
+        if (gOtaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
         uint64_t t0 = esp_timer_get_time();
         if (!_rawBuf || !inference_buffer) {
             vTaskDelay(pdMS_TO_TICKS(1000));

@@ -123,6 +123,11 @@ static void TaskIOT(void* pv) {
     static uint32_t lastIdle0 = 0, lastIdle1 = 0;
 
     while (true) {
+        if (gOtaInProgress) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
         uint64_t t0 = esp_timer_get_time();
 
         // =================================================================

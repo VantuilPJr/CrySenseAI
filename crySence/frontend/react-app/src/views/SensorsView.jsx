@@ -37,10 +37,7 @@ function HistoryLineChart({ samples, series, title, uptime_s }) {
         if (maxVal === minVal) { minVal -= 1; maxVal += 1; }
         const valRange = maxVal - minVal;
 
-        // Eixo X por timestamp
-        const minTs = samples[0].ts;
-        const maxTs = samples[samples.length - 1].ts;
-        const tsRange = maxTs - minTs || 1;
+        const count = samples.length;
 
         // Grid horizontal (5 linhas)
         for (let i = 0; i <= 4; i++) {
@@ -56,16 +53,16 @@ function HistoryLineChart({ samples, series, title, uptime_s }) {
         }
         ctx.setLineDash([]);
 
-        // Desenha cada série como linha
+        // Desenha cada série como linha usando o ÍNDICE para garantir avanço contínuo (resolve zig-zag de reboot)
         series.forEach(s => {
             ctx.beginPath();
             ctx.strokeStyle = s.color;
             ctx.lineWidth = 1.8;
             let first = true;
-            samples.forEach(p => {
+            samples.forEach((p, index) => {
                 const val = p[s.key];
                 if (val === undefined || isNaN(val)) return;
-                const x = PAD.l + ((p.ts - minTs) / tsRange) * IW;
+                const x = PAD.l + (index / (count - 1)) * IW;
                 const y = PAD.t + IH - ((val - minVal) / valRange) * IH;
                 if (first) { ctx.moveTo(x, y); first = false; }
                 else ctx.lineTo(x, y);
@@ -73,13 +70,20 @@ function HistoryLineChart({ samples, series, title, uptime_s }) {
             ctx.stroke();
         });
 
-        // Labels eixo X (5 pontos de tempo)
+        // Labels eixo X (5 pontos de tempo baseados no índice, assumindo amostras a cada 30s)
         ctx.fillStyle = textColor;
         ctx.font = '9px sans-serif';
         for (let i = 0; i <= 4; i++) {
-            const ts = minTs + (i / 4) * tsRange;
-            const x  = PAD.l + (i / 4) * IW;
-            const label = formatRelTime(ts, uptime_s);
+            const pct = i / 4;
+            const index = Math.round(pct * (count - 1));
+            const x = PAD.l + pct * IW;
+            
+            // Cada amostra representa ~30 segundos no passado em relação à amostra mais recente
+            const secondsAgo = (count - 1 - index) * 30;
+            // Cria um ts_s fake subtraindo de uptime_s para aproveitar a função formatRelTime
+            const fakeTs = uptime_s - secondsAgo;
+            
+            const label = formatRelTime(fakeTs, uptime_s);
             ctx.fillText(label, x - 14, H - 6);
         }
     }, [samples, series, uptime_s]);
