@@ -52,6 +52,9 @@ static uint32_t _lastFlushMs  = 0;
 static void _flush() {
     if (!_started || !_buf || _count == 0) return;
 
+    logOtaPsramAccess("HistoryManager::_flush buffer");
+    logOtaSpiffsAccess("HistoryManager::_flush SPIFFS.open");
+
     // Pega mutex com timeout de 500ms para não bloquear tasks críticas
     if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(500)) != pdTRUE) return;
 
@@ -76,6 +79,7 @@ static void _flush() {
 
 // Carrega o arquivo binário salvo anteriormente de volta para o ring buffer
 static void _load() {
+    logOtaSpiffsAccess("HistoryManager::_load exists/open/read");
     if (!SPIFFS.exists(HISTORY_FILE_PATH)) {
         Serial.println("[HISTORY] Nenhum histórico anterior encontrado.");
         return;
@@ -106,6 +110,7 @@ static void _load() {
 // Inicializa o módulo. Chamar no setup() após LogManager::begin().
 void begin() {
     // Aloca o ring buffer na PSRAM (não toca a heap interna do chip)
+    logOtaPsramAccess("HistoryManager::begin ps_malloc");
     _buf = (SensorSample*)ps_malloc(HISTORY_MAX_SAMPLES * sizeof(SensorSample));
     if (!_buf) {
         Serial.println("[HISTORY] ERRO: Falha ao alocar buffer na PSRAM!");
@@ -141,6 +146,8 @@ void begin() {
 // Retorna true se registrou, false se ainda no cooldown de 30s.
 bool sample(const WebDashboardState& st) {
     if (!_started || !_buf) return false;
+
+    logOtaPsramAccess("HistoryManager::sample ring buffer");
 
     const uint32_t now = millis();
     if ((now - _lastSampleMs) < HISTORY_SAMPLE_INTERVAL_MS) return false;

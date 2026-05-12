@@ -10,7 +10,7 @@
 #include "driver/i2s.h"
 #include "esp_sleep.h"
 
-#include "esp_wifi.h"
+#include "esp_wifi.h" 
 #include <ArduinoJson.h>
 #include <ArduinoOTA.h>
 #include <WiFi.h>
@@ -19,7 +19,7 @@
 
 DNSServer dnsServer;
 
-// --- Módulos do sistema ---
+// --- Módulos do sistema --- 
 #include "audio_player.h"
 #include "config_manager.h"
 #include "display_manager.h"
@@ -33,9 +33,9 @@ DNSServer dnsServer;
 // web_server tem dependência de AudioPlayer (tamanhoArquivo e salvarWav)
 #include "web_server.h"
 
-// =============================================================================
+// ==================================================================
 // ESTADO COMPARTILHADO (Instanciação das globais do config_manager)
-// =============================================================================
+// ==================================================================
 SistemaState gState;
 SemaphoreHandle_t gMutexState = nullptr;
 WebDashboardState gWebState = {};
@@ -46,17 +46,35 @@ QueueHandle_t qResultadoIA = nullptr;       // IA → Decisao
 QueueHandle_t qFirebase = nullptr;          // Decisao → IOT
 QueueHandle_t qAudioUpload = nullptr;       // Audio -> Classificador remoto
 QueueHandle_t qRemoteResult = nullptr;      // Classificador remoto -> Decisao
-static bool gOtaReady = false;
-bool gOtaInProgress = false; // Flag para suspender acesso a PSRAM durante OTA
+volatile bool gOtaInProgress = false; // Flag para suspender acesso a PSRAM durante OTA
+volatile bool gOtaFinished = false;
+volatile bool gOtaError = false;
+volatile uint32_t gOtaIndex = 0;
+volatile uint32_t gOtaLastActivity = 0;
+
+void logOtaPsramAccess(const char *site) {
+  if (gOtaInProgress) {
+    Serial.printf("[OTA-GUARD] PSRAM access while OTA active at %s\n",
+                  site ? site : "unknown");
+  }
+}
+
+void logOtaSpiffsAccess(const char *site) {
+  if (gOtaInProgress) {
+    Serial.printf("[OTA-GUARD] SPIFFS access while OTA active at %s\n",
+                  site ? site : "unknown");
+  }
+}
 
 // Task handles para controle durante OTA
-static TaskHandle_t hTaskIA = nullptr;
-static TaskHandle_t hTaskDecisao = nullptr;
-static TaskHandle_t hTaskAudio = nullptr;
-static TaskHandle_t hTaskPlayer = nullptr;
-static TaskHandle_t hTaskHMI = nullptr;
-static TaskHandle_t hTaskIOT = nullptr;
-static TaskHandle_t hTaskRemote = nullptr;
+TaskHandle_t hTaskIA = nullptr;
+TaskHandle_t hTaskDecisao = nullptr;
+TaskHandle_t hTaskAudio = nullptr;
+TaskHandle_t hTaskPlayer = nullptr;
+TaskHandle_t hTaskHMI = nullptr;
+TaskHandle_t hTaskIOT = nullptr;
+TaskHandle_t hTaskRemote = nullptr;
+TaskHandle_t hTaskLoop = nullptr;
 
 // ================================
 // BUFFER DE INFERÊNCIA (em PSRAM)
@@ -64,6 +82,7 @@ static TaskHandle_t hTaskRemote = nullptr;
 float *inference_buffer = nullptr; // 16000 floats = 64KB → PSRAM
 
 int get_signal_data_callback(size_t offset, size_t length, float *out_ptr) {
+  logOtaPsramAccess("get_signal_data_callback");
   memcpy(out_ptr, inference_buffer + offset, length * sizeof(float));
   return 0;
 }
@@ -95,21 +114,58 @@ void IRAM_ATTR isrBotaoReset() {
 }
 
 // =============================================================================
+// HELPER FUNCTIONS — Suspender/Resumir Tasks para OTA
+// =============================================================================
+void suspendAllTasks() {
+  if (hTaskIA) vTaskSuspend(hTaskIA);
+  if (hTaskDecisao) vTaskSuspend(hTaskDecisao);
+  if (hTaskAudio) vTaskSuspend(hTaskAudio);
+  if (hTaskPlayer) vTaskSuspend(hTaskPlayer);
+  if (hTaskHMI) vTaskSuspend(hTaskHMI);
+  if (hTaskIOT) vTaskSuspend(hTaskIOT);
+  if (hTaskRemote) vTaskSuspend(hTaskRemote);
+  if (hTaskLoop) vTaskSuspend(hTaskLoop);
+  vTaskDelay(pdMS_TO_TICKS(100)); // Aguarda suspensão efetiva
+}
+
+void resumeAllTasks() {
+  if (hTaskIA) vTaskResume(hTaskIA);
+  if (hTaskDecisao) vTaskResume(hTaskDecisao);
+  if (hTaskAudio) vTaskResume(hTaskAudio);
+  if (hTaskPlayer) vTaskResume(hTaskPlayer);
+  if (hTaskHMI) vTaskResume(hTaskHMI);
+  if (hTaskIOT) vTaskResume(hTaskIOT);
+  if (hTaskRemote) vTaskResume(hTaskRemote);
+  if (hTaskLoop) vTaskResume(hTaskLoop);
+}
+
+void killAllAppTasks() {
+  TaskHandle_t cur = xTaskGetCurrentTaskHandle();
+  if (hTaskIA && hTaskIA != cur) { vTaskDelete(hTaskIA); hTaskIA = nullptr; }
+  if (hTaskDecisao && hTaskDecisao != cur) { vTaskDelete(hTaskDecisao); hTaskDecisao = nullptr; }
+  if (hTaskAudio && hTaskAudio != cur) { vTaskDelete(hTaskAudio); hTaskAudio = nullptr; }
+  // hTaskPlayer may be nullptr (integrated). If present and not current, delete.
+  if (hTaskPlayer && hTaskPlayer != cur) { vTaskDelete(hTaskPlayer); hTaskPlayer = nullptr; }
+  if (hTaskHMI && hTaskHMI != cur) { vTaskDelete(hTaskHMI); hTaskHMI = nullptr; }
+  if (hTaskIOT && hTaskIOT != cur) { vTaskDelete(hTaskIOT); hTaskIOT = nullptr; }
+  if (hTaskRemote && hTaskRemote != cur) { vTaskDelete(hTaskRemote); hTaskRemote = nullptr; }
+  if (hTaskLoop && hTaskLoop != cur) { vTaskDelete(hTaskLoop); hTaskLoop = nullptr; }
+  // small delay to allow deletions to settle
+  vTaskDelay(pdMS_TO_TICKS(100));
+}
+
+// =============================================================================
 // TASK 1 — INFERÊNCIA IA (Core 1, Prioridade 4)
 // Aguarda áudio pronto → run_classifier → envia resultado
 // =============================================================================
 void TaskIA(void *pv) {
   LogManager::info("[TaskIA] Iniciada no Core 1");
   while (true) {
-    if (gOtaInProgress) {
-      vTaskDelay(pdMS_TO_TICKS(100));
-      continue;
-    }
-    
+    while (gOtaInProgress) { vTaskDelay(pdMS_TO_TICKS(100)); }
+
     // Aguarda semáforo do TaskAudio (bloqueante)
     xSemaphoreTake(semAudioPronto, portMAX_DELAY);
-    
-    if (gOtaInProgress) continue;
+    while (gOtaInProgress) { vTaskDelay(pdMS_TO_TICKS(100)); }
 
     uint64_t t0 = esp_timer_get_time();
     CryConfig &cfg = ConfigManager::get();
@@ -347,7 +403,7 @@ void TaskDecisao(void *pv) {
   const uint32_t CAPTURE_COOLDOWN_MS = 9000UL;
 
   while (true) {
-    if (gOtaInProgress) { vTaskDelay(100); continue; }
+    while (gOtaInProgress) { vTaskDelay(pdMS_TO_TICKS(100)); }
     // ISR de reset (botão GPIO0)
     if (flagResetISR) {
       // Ignora pulsos espúrios durante o boot/rede inicial.
@@ -476,6 +532,11 @@ void TaskDecisao(void *pv) {
     float execMs = (float)(esp_timer_get_time() - t0) / 1000.0f;
     Serial.printf("[TaskDecisao] Tempo de execucao: %.1fms\n", execMs);
 
+    if (gOtaInProgress) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+      continue;
+    }
+
     // Registra amostra histórica a cada 30s (não bloqueia, sem custo de Flash)
     HistoryManager::sample(gWebState);
 
@@ -498,11 +559,12 @@ void TaskDecisao(void *pv) {
 // SETUP PRINCIPAL
 // =============================================================================
 void setup() {
+  hTaskLoop = xTaskGetCurrentTaskHandle(); // Guarda o handle da task principal (Core 1) para o OTA poder suspendê-la
   Serial.begin(115200);
   vTaskDelay(pdMS_TO_TICKS(500));
 
   Serial.println("\n=========================================");
-  Serial.println(" CrySense AI v2.0 — Inicializando...");
+  Serial.println(" CrySense AI v2.1 — Inicializando...");
   Serial.println("=========================================");
 
   // --- PSRAM ---
@@ -515,11 +577,13 @@ void setup() {
   // --- Buffers em PSRAM ---
   inference_buffer =
       (float *)ps_malloc(EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE * sizeof(float));
+  logOtaPsramAccess("setup: ps_malloc(inference_buffer)");
   if (!inference_buffer) {
     Serial.println("[BOOT] ERRO: falha ao alocar buffers em PSRAM!");
     while (true)
       ; // Halt
   }
+  logOtaPsramAccess("setup: memset(inference_buffer)");
   memset(inference_buffer, 0,
          EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE * sizeof(float));
 
@@ -618,13 +682,7 @@ void setup() {
 
     // BUGFIX: Suspende as rotinas pesadas para evitar que a CPU seja sequestrada
     // Isto garante 100% de estabilidade de rede e flash durante o OTA!
-    if (hTaskIA) vTaskSuspend(hTaskIA);
-    if (hTaskDecisao) vTaskSuspend(hTaskDecisao);
-    if (hTaskAudio) vTaskSuspend(hTaskAudio);
-    if (hTaskPlayer) vTaskSuspend(hTaskPlayer);
-    if (hTaskHMI) vTaskSuspend(hTaskHMI);
-    if (hTaskIOT) vTaskSuspend(hTaskIOT);
-    if (hTaskRemote) vTaskSuspend(hTaskRemote);
+    suspendAllTasks();
     
     AudioPlayer::parar();
   });
@@ -651,7 +709,6 @@ void setup() {
   });
 
   ArduinoOTA.begin();
-  gOtaReady = true;
   LogManager::info("[OTA] Servico de gravacao sem fio iniciado!");
 
   // --- Estado inicial ---
@@ -699,30 +756,25 @@ void setup() {
 void loop() {
   dnsServer.processNextRequest();
 
-  if (gOtaReady) {
-    ArduinoOTA.handle();
+  // Watchdog de OTA: Se ficar 10s sem dados, cancela tudo
+  if (gOtaInProgress && (millis() - gOtaLastActivity > 10000)) {
+      Serial.println("[OTA] Timeout! Abortando...");
+      gOtaInProgress = false;
+      gOtaError = true;
+      gOtaFinished = true;
+      Update.abort();
   }
 
-  if (gOtaInProgress) {
-    vTaskDelay(pdMS_TO_TICKS(100));
-    return;
-  }
+    // Se o OTA está rolando, bloqueia a execução do loop principal
+    while (gOtaInProgress) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+    }
+ 
+  // Handle the built-in ArduinoOTA unconditionally
+  ArduinoOTA.handle();
 
   // Flush do histórico para SPIFFS a cada 30min (não-bloqueante, protege Flash)
-  HistoryManager::flushIfNeeded();
+  HistoryManager::flushIfNeeded();  
 
-  // BUGFIX: Descarrega o buffer de log RAM → SPIFFS apenas a cada 60s.
-  // BUGFIX: Flash Wear Leveling. O usuário solicitou que não houvesse escrita
-  // "em loop" na memória flash. O LogManager::flush() foi removido daqui.
-  // Os logs de 60s rotativos ficarão apenas no buffer circular em RAM,
-  // preservando fisicamente a vida útil da NAND Flash do ESP32.
-  // Se o usuário pedir o CSV pelo painel, os dados da RAM serão servidos.
-
-  // O usuário relatou que o consumo cravado em 100% no Core 1 devia ser
-  // reduzido. Voltando para um micro-delay de 10ms. É tempo mais do que
-  // suficiente para o FreeRTOS alimentar a thread "IDLE", zerando o bug do
-  // "100% CPU", sem causar absolutamente nenhum atraso nocivo para a amostragem
-  // de áudio (porque a leitura I2S tem DMA buffer e vive numa task isolada
-  // prioritária).
   vTaskDelay(pdMS_TO_TICKS(10));
 }

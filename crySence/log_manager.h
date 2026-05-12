@@ -27,6 +27,7 @@ static int                _ramCount   = 0;  // quantas entradas pendentes de flu
 
 // --- Rotação do arquivo SPIFFS: remove primeiras 600 linhas se > limite ---
 static void _rotacionar() {
+    logOtaSpiffsAccess("LogManager::_rotacionar SPIFFS open/remove/rename");
     size_t sz = 0;
     if (SPIFFS.exists(LOG_FILE_PATH)) {
         File fSz = SPIFFS.open(LOG_FILE_PATH, "r");
@@ -81,6 +82,7 @@ static void _write(char level, const char* msg) {
 // =============================================================================
 void flush() {
     if (!_started) return;
+    logOtaSpiffsAccess("LogManager::flush SPIFFS open/append");
     if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(500)) != pdTRUE) return;
 
     if (_ramCount == 0) {
@@ -114,6 +116,7 @@ void flush() {
 // API pública
 // =============================================================================
 void begin() {
+    logOtaSpiffsAccess("LogManager::begin SPIFFS.begin/load count");
     if (!SPIFFS.begin(true)) {
         Serial.println("[LOG] SPIFFS falhou!");
         return;
@@ -164,6 +167,8 @@ void warningf(const char* fmt, ...) {
 // Inclui tanto entradas já em SPIFFS quanto as ainda no buffer RAM
 String getLogs(int limit = 200) {
     if (!_started) return "[]";
+
+    logOtaSpiffsAccess("LogManager::getLogs SPIFFS read");
 
     std::vector<String> lines;
     lines.reserve(limit);

@@ -133,7 +133,7 @@ void mostrarWiFi(bool conectando, const char *ssid, const char *ip = "") {
   _oled.clearDisplay();
   _oled.setTextSize(1);
   _oled.setCursor(0, 0);
-  _oled.print(conectando ? "kkkkkkk" : "WiFi Conectado!");
+  _oled.print(conectando ? "WiFi Conectando..." : "WiFi Conectado!");
   _oled.setCursor(0, 16);
   _oled.print("SSID: ");
   _oled.print(ssid);
@@ -170,15 +170,13 @@ void limpar() {
   _oled.display();
 }
 
-extern bool gOtaInProgress;
-
 // --- Task HMI: Atualiza OLED periodicamente e manda sensores pro Firebase ---
 static void TaskHMI(void *pv) {
   LogManager::info("[TaskHMI] Iniciada no Core 0");
   uint32_t tUltimoDisplay = 0;
 
   while (true) {
-    if (gOtaInProgress) { vTaskDelay(100); continue; }
+    while (gOtaInProgress) { vTaskDelay(pdMS_TO_TICKS(100)); }
     uint64_t t0 = esp_timer_get_time();
     
     CryConfig &cfg = ConfigManager::get();

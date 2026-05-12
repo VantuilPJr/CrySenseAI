@@ -35,6 +35,10 @@ struct CryConfig {
 #include <freertos/semphr.h>
 #include <freertos/queue.h>
 
+extern volatile bool gOtaInProgress;
+void logOtaPsramAccess(const char *site);
+void logOtaSpiffsAccess(const char *site);
+
 #define TAMANHO_BUFFER      10
 
 // =============================================================================

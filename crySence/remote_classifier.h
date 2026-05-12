@@ -321,16 +321,11 @@ static bool _postClip(const CryConfig& cfg, const AudioClipMsg& clip, RemoteClas
     return ok;
 }
 
-extern bool gOtaInProgress;
-
 static void TaskRemoteClassifier(void* pv) {
     LogManager::info("[TaskRemoteClassifier] Iniciada no Core 0");
     AudioClipMsg clip;
     while (true) {
-        if (gOtaInProgress) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
-        }
+        while (gOtaInProgress) { vTaskDelay(pdMS_TO_TICKS(100)); }
         if (xQueueReceive(qAudioUpload, &clip, pdMS_TO_TICKS(100)) != pdTRUE) continue;
         if (!clip.wavData || clip.wavLen < 44 || clip.wavLen > REMOTE_CLIP_WAV_BYTES) {
             _err++;

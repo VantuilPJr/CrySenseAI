@@ -123,10 +123,7 @@ static void TaskIOT(void* pv) {
     static uint32_t lastIdle0 = 0, lastIdle1 = 0;
 
     while (true) {
-        if (gOtaInProgress) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
-        }
+        while (gOtaInProgress) { vTaskDelay(pdMS_TO_TICKS(100)); }
 
         uint64_t t0 = esp_timer_get_time();
 
@@ -193,6 +190,10 @@ static void TaskIOT(void* pv) {
         // Heartbeat a cada 60s
         if (millis() - tUltimoHB > 60000) {
             tUltimoHB = millis();
+            if (gOtaInProgress) {
+                Serial.println("[OTA-GUARD] TaskIOT pulou heartbeat durante OTA");
+                continue;
+            }
             CryConfig& cfg = ConfigManager::get();
             enviarHeartbeat(
                 cfg.firebase_url, cfg.firebase_auth,
@@ -202,8 +203,6 @@ static void TaskIOT(void* pv) {
 
             gWebState.uptime_s   = esp_timer_get_time() / 1000000ULL;
             gWebState.wifi_ok    = (WiFi.status() == WL_CONNECTED);
-            gWebState.flash_used = ESP.getSketchSize();
-            gWebState.flash_tot  = ESP.getFlashChipSize();
             strncpy(gWebState.ip, WiFi.localIP().toString().c_str(), sizeof(gWebState.ip));
             gWebState.audio_spiffs_size = (float)AudioPlayer::tamanhoArquivo();
         }

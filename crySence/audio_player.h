@@ -280,6 +280,7 @@ void liberarClipRemoto() {
 
 // --- Upload de arquivo WAV via dados brutos (usado pela web) ---
 bool salvarWavSpiffs(const uint8_t* data, size_t len) {
+    logOtaSpiffsAccess("AudioPlayer::salvarWavSpiffs SPIFFS.open/write");
     File f = SPIFFS.open(AUDIO_SPIFFS_PATH, "w");
     if (!f) return false;
     f.write(data, len);
@@ -290,12 +291,11 @@ bool salvarWavSpiffs(const uint8_t* data, size_t len) {
 
 bool temArquivoLocal() { return SPIFFS.exists(AUDIO_SPIFFS_PATH); }
 size_t tamanhoArquivo() {
+    logOtaSpiffsAccess("AudioPlayer::tamanhoArquivo SPIFFS.exists/open");
     if (!SPIFFS.exists(AUDIO_SPIFFS_PATH)) return 0;
     File f = SPIFFS.open(AUDIO_SPIFFS_PATH, "r");
     size_t s = f.size(); f.close(); return s;
 }
-
-extern bool gOtaInProgress;
 
 // --- Task de Leitura e Gate do Microfone ---
 static void TaskAudio(void* pv) {
@@ -303,10 +303,7 @@ static void TaskAudio(void* pv) {
     const int CHUNK = EI_CLASSIFIER_DSP_INPUT_FRAME_SIZE / 4; 
     float dc_offset = 0.0f; // Filtro passa-alta estimador de Media DC
     while (true) {
-        if (gOtaInProgress) {
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
-        }
+        while (gOtaInProgress) { vTaskDelay(pdMS_TO_TICKS(100)); }
 
         uint64_t t0 = esp_timer_get_time();
         if (!_rawBuf || !inference_buffer) {
@@ -317,13 +314,24 @@ static void TaskAudio(void* pv) {
         int totalLidos = 0;
         
         for (int chunk = 0; chunk < 4; chunk++) {
+            if (gOtaInProgress) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                break;
+            }
             size_t bytesRead = 0;
             i2s_read(MIC_PORT, _rawBuf, samplesPerChunk * sizeof(int32_t),
                      &bytesRead, pdMS_TO_TICKS(2000));
+            if (gOtaInProgress) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                break;
+            }
             int n = bytesRead / sizeof(int32_t);
             int off = chunk * samplesPerChunk;
             
             for (int i = 0; i < n; i++) {
+                if (gOtaInProgress) {
+                    break;
+                }
                 // Shift para converter 32-bit I2S (onde os dados relevantes estão nos bits mais significativos)
                 // Para MAX9814/INMP441, o valor de 32-bit tem 24 bits úteis.
                 float raw_s = ((float)(_rawBuf[i] >> 8) / 8388608.0f) * GAIN_MULTIPLIER; 
@@ -465,6 +473,16 @@ static void beginTasks(TaskHandle_t* pTaskAudio = nullptr, TaskHandle_t* pTaskPl
     if (pTaskPlayer) {
         *pTaskPlayer = nullptr; // Não há handle separado disponível
     }
+}
+
+static void suspendI2S() {
+    i2s_stop(MIC_PORT);
+    i2s_stop(SPK_PORT);
+}
+
+static void resumeI2S() {
+    i2s_start(MIC_PORT);
+    i2s_start(SPK_PORT);
 }
 
 } // namespace AudioPlayer

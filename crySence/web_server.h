@@ -9,11 +9,49 @@
 #include <WiFi.h>
 #include <Update.h>
 
+extern TaskHandle_t hTaskIA;
+extern TaskHandle_t hTaskDecisao;
+extern TaskHandle_t hTaskAudio;
+extern TaskHandle_t hTaskPlayer;
+extern TaskHandle_t hTaskHMI;
+extern TaskHandle_t hTaskIOT;
+extern TaskHandle_t hTaskRemote;
+extern TaskHandle_t hTaskLoop;
+
+extern volatile bool gOtaFinished;
+extern volatile bool gOtaError;
+extern volatile uint32_t gOtaIndex;
+extern volatile bool gOtaInProgress;
+extern volatile uint32_t gOtaLastActivity;
+extern SemaphoreHandle_t semAudioPronto;
+
+void suspendAllTasks();
+void resumeAllTasks();
+void killAllAppTasks();
+
 namespace WebServer {
 
 static AsyncWebServer _server(80);
 static bool _started = false;
 static WebDashboardState *_state = nullptr;
+static constexpr size_t OTA_WEB_CHUNK_BUF_SIZE = 8192;
+
+static void _cleanupWebOta() {
+  ::gOtaInProgress = false;
+  ::gOtaFinished = false;
+  // Restaura I2S (microfone/alto-falante) e retoma todas as tasks
+  AudioPlayer::resumeI2S();
+  resumeAllTasks();
+}
+
+static bool _waitWebOtaFinished(uint32_t timeoutMs) {
+  uint32_t start = millis();
+  while (::gOtaInProgress && !::gOtaFinished && !::gOtaError &&
+         (millis() - start < timeoutMs)) {
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+  return ::gOtaFinished && !::gOtaError;
+}
 
 static void _scheduleRestartMs(uint32_t ms) {
   static esp_timer_handle_t restartTimer = nullptr;
@@ -52,6 +90,7 @@ static const char *labelPt(const char *label) {
 // ===================================================================
 // SETUP DO SERVIDOR
 // ===================================================================
+
 void begin(WebDashboardState *state, CryConfig *cfgPtr) {
   _state = state;
 
@@ -60,9 +99,11 @@ void begin(WebDashboardState *state, CryConfig *cfgPtr) {
   // <script type="module"> sem Content-Type: text/javascript.
   // Nomes FIXOS configurados no vite.config.js (sem hash) — sobrescrevem a cada build.
   _server.on("/assets/index.js", HTTP_GET, [](AsyncWebServerRequest* req) {
+      logOtaSpiffsAccess("WebServer::/assets/index.js SPIFFS send");
       req->send(SPIFFS, "/assets/index.js", "text/javascript");
   });
   _server.on("/assets/index.css", HTTP_GET, [](AsyncWebServerRequest* req) {
+      logOtaSpiffsAccess("WebServer::/assets/index.css SPIFFS send");
       req->send(SPIFFS, "/assets/index.css", "text/css");
   });
 
@@ -238,7 +279,6 @@ void begin(WebDashboardState *state, CryConfig *cfgPtr) {
     doc["audio_url"]          = cfgPtr->audio_url;
     doc["classifier_url"]     = cfgPtr->classifier_url;
     doc["classifier_timeout_ms"] = cfgPtr->classifier_timeout_ms;
-    doc["confianca_minima"]   = cfgPtr->confianca_minima;
     doc["volume_audio"]       = cfgPtr->volume_audio;
     doc["temp_max_conforto"]  = cfgPtr->temp_max_conforto;
     doc["temp_min_conforto"]  = cfgPtr->temp_min_conforto;
@@ -326,65 +366,116 @@ void begin(WebDashboardState *state, CryConfig *cfgPtr) {
         req->send(500, "application/json", "{\"error\":\"scan_failed\"}");
         return;
     }
-    
-    JsonDocument doc;
+    DynamicJsonDocument doc(1024);
     JsonArray arr = doc.to<JsonArray>();
     if (n > 0) {
       for (int i = 0; i < n; ++i) {
-        JsonObject obj = arr.add<JsonObject>();
-        obj["ssid"] = WiFi.SSID(i);
-        obj["rssi"] = WiFi.RSSI(i);
+        JsonObject o = arr.createNestedObject();
+        o["ssid"] = WiFi.SSID(i);
+        o["rssi"] = WiFi.RSSI(i);
+        o["enc"]  = (int)WiFi.encryptionType(i);
+        o["hidden"] = false;
       }
     }
-    WiFi.scanDelete(); // libera stack
     String out;
     serializeJson(doc, out);
     req->send(200, "application/json", out);
   });
 
-  // ================================================================
-  // API: OTA Firmware Upload via Web
-  // ================================================================
-  _server.on("/api/ota/status", HTTP_GET, [](AsyncWebServerRequest *req) {
-      req->send(200, "application/json", "{\"ok\":true}");
-  });
+
 
   _server.on("/api/ota/upload", HTTP_POST, [](AsyncWebServerRequest *req) {
-      bool error = Update.hasError();
-      if (error) {
+      if (!req->hasHeader("X-OTA-Password") ||
+          req->header("X-OTA-Password") != ConfigManager::get().ota_password) {
+          req->send(401, "text/plain", "Unauthorized");
+          _cleanupWebOta();
+          return;
+      }
+
+      bool ok = _waitWebOtaFinished(20000);
+      if (!ok && !::gOtaError) {
+          ::gOtaError = true;
+          Update.abort();
+      }
+
+      if (::gOtaError) {
           req->send(500, "text/plain", "Update Failed");
       } else {
           req->send(200, "text/plain", "Update Success");
           _scheduleRestartMs(1000);
       }
+      _cleanupWebOta();
   }, [](AsyncWebServerRequest *req, String filename, size_t index, uint8_t *data, size_t len, bool final) {
-      if (!req->hasHeader("X-OTA-Password")) {
-          return;
-      }
-      String pass = req->header("X-OTA-Password");
-      if (pass != ConfigManager::get().ota_password) {
+      if (!req->hasHeader("X-OTA-Password") ||
+          req->header("X-OTA-Password") != ConfigManager::get().ota_password) {
           return;
       }
 
       if (!index) {
           Serial.printf("[OTA-WEB] Update Start: %s\n", filename.c_str());
-          AudioPlayer::_parar = true; // Parada assíncrona para não travar a task LwIP
-          gOtaInProgress = true;      // Impede que a TaskMic acesse PSRAM enquanto a Flash é gravada
-          if (!Update.begin(UPDATE_SIZE_UNKNOWN)) {
-              Update.printError(Serial);
+          ::gOtaError = false;
+          ::gOtaFinished = false;
+          ::gOtaLastActivity = millis();
+
+          // BUGFIX: Ordem correta de shutdown antes de sinalizar gOtaInProgress.
+          // 1) Para o I2S (microfone/speaker) para liberar o i2s_read pendente.
+          // 2) Sinaliza parada do TaskAudio_Spk.
+          // 3) Aguarda tasks chegarem a pontos seguros antes de suspendê-las.
+          // 4) Só então sinaliza gOtaInProgress=true para que nenhuma task
+          //    acorde do suspend checando a flag e entrando em loop de espera.
+          AudioPlayer::_parar = true;
+          AudioPlayer::suspendI2S();
+          vTaskDelay(pdMS_TO_TICKS(250)); // Aguarda i2s_read retornar
+          suspendAllTasks();
+
+          // Drena semáforo de áudio: evita que TaskIA acorde após ser suspensa
+          // caso um Give() tenha ocorrido antes da suspensão.
+          xSemaphoreTake(semAudioPronto, 0);
+
+          // Apenas agora é seguro sinalizar o progresso do OTA.
+          ::gOtaInProgress = true;
+
+          uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+          if (!Update.begin(maxSketchSpace, U_FLASH)) {
+            Update.printError(Serial);
+            ::gOtaError = true;
+            ::gOtaFinished = true;
+            AudioPlayer::resumeI2S();
+            ::gOtaInProgress = false;
+            resumeAllTasks();
+            return;
           }
       }
-      if (!Update.hasError()) {
-          if (Update.write(data, len) != len) {
-              Update.printError(Serial);
-          }
+
+      if (::gOtaError) return;
+      if (len > OTA_WEB_CHUNK_BUF_SIZE) {
+          Serial.printf("[OTA-WEB] Chunk maior que o buffer: %uB\n", (unsigned)len);
+          ::gOtaError = true;
+          ::gOtaFinished = true;
+          Update.abort();
+          return;
       }
+
+      if (Update.write(data, len) != len) {
+        Update.printError(Serial);
+        ::gOtaError = true;
+        ::gOtaFinished = true;
+        Update.abort();
+        return;
+      }
+
+      ::gOtaIndex = index;
+      ::gOtaLastActivity = millis();
+
       if (final) {
-          if (Update.end(true)) {
-              Serial.printf("[OTA-WEB] Update Success: %uB\n", index + len);
-          } else {
-              Update.printError(Serial);
-          }
+        if (Update.end(true)) {
+          Serial.printf("[OTA-WEB] Update Success: %uB\n", index + len);
+          ::gOtaFinished = true;
+        } else {
+          Update.printError(Serial);
+          ::gOtaError = true;
+          ::gOtaFinished = true;
+        }
       }
   });
 
@@ -439,6 +530,7 @@ void begin(WebDashboardState *state, CryConfig *cfgPtr) {
 
     String path = req->url();
     if (SPIFFS.exists(path)) {
+      logOtaSpiffsAccess("WebServer::onNotFound SPIFFS send");
       String mime = "text/plain";
       if      (path.endsWith(".js"))   mime = "text/javascript";
       else if (path.endsWith(".css"))  mime = "text/css";
